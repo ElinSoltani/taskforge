@@ -69,6 +69,8 @@ func JobResponseFromDomain(job *model.Job, baseURL string) JobResponse {
 		MaxAttempts:    job.MaxAttempts,
 		TimeoutSeconds: job.TimeoutSeconds,
 		CorrelationID:  job.CorrelationID,
+		LastError:      job.LastError,
+		RunAt:          formatTime(job.RunAt),
 		CreatedAt:      formatTime(job.CreatedAt),
 		UpdatedAt:      formatTime(job.UpdatedAt),
 		Links:          JobLinks{Self: self},

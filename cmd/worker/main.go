@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	"github.com/taskforge/taskforge/config"
-	domainhandler "github.com/taskforge/taskforge/domain/handler"
 	"github.com/taskforge/taskforge/infrastructure/postgres"
 	"github.com/taskforge/taskforge/infrastructure/redis"
 	"github.com/taskforge/taskforge/repository"
@@ -37,14 +36,17 @@ func main() {
 	defer rdb.Close()
 
 	repo := repository.NewRepository(pg, rdb)
-	handlers := map[string]domainhandler.JobHandler{
-		"ping": worker.PingHandler{},
+	retryCfg := worker.RetryConfig{
+		BaseDelay: cfg.Backoff.BaseDelay,
+		MaxDelay:  cfg.Backoff.MaxDelay,
 	}
 
-	runner := worker.NewRunner(repo, cfg.Worker.ConsumerName, handlers)
+	runner := worker.NewRunner(repo, cfg.Worker.ConsumerName, worker.DefaultHandlers(), retryCfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	go worker.RunScheduler(ctx, repo, cfg.Backoff.SchedulerInterval)
 
 	if err := runner.Run(ctx); err != nil && ctx.Err() == nil {
 		slog.Error("worker", "error", err)

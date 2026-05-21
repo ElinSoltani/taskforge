@@ -15,6 +15,13 @@ type Config struct {
 	Postgres PostgresConfig
 	Redis    RedisConfig
 	Worker   WorkerConfig
+	Backoff  BackoffConfig
+}
+
+type BackoffConfig struct {
+	BaseDelay         time.Duration
+	MaxDelay          time.Duration
+	SchedulerInterval time.Duration
 }
 
 type HTTPConfig struct {
@@ -68,6 +75,11 @@ func Load() (*Config, error) {
 		Worker: WorkerConfig{
 			ConsumerName: env("WORKER_CONSUMER_NAME", "worker-1"),
 			BlockTimeout: envDuration("WORKER_BLOCK_TIMEOUT", 2*time.Second),
+		},
+		Backoff: BackoffConfig{
+			BaseDelay:         envDuration("BACKOFF_BASE", 5*time.Second),
+			MaxDelay:          envDuration("BACKOFF_MAX", 15*time.Minute),
+			SchedulerInterval: envDuration("RETRY_SCHEDULER_INTERVAL", 5*time.Second),
 		},
 	}
 	if cfg.Postgres.Host == "" || cfg.Postgres.Database == "" {

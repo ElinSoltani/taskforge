@@ -19,6 +19,7 @@ func (d *Job) ToDomain() *model.Job {
 		TimeoutSeconds: d.TimeoutSeconds,
 		IdempotencyKey: d.IdempotencyKey,
 		CorrelationID:  d.CorrelationID,
+		LastError:      d.LastError,
 		CreatedAt:      d.CreatedAt,
 		UpdatedAt:      d.UpdatedAt,
 	}
@@ -39,6 +40,7 @@ func (d *Job) FromDomain(m *model.Job) {
 	d.TimeoutSeconds = m.TimeoutSeconds
 	d.IdempotencyKey = m.IdempotencyKey
 	d.CorrelationID = m.CorrelationID
+	d.LastError = m.LastError
 	d.CreatedAt = m.CreatedAt
 	d.UpdatedAt = m.UpdatedAt
 }

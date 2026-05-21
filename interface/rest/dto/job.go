@@ -35,6 +35,8 @@ type JobResponse struct {
 	MaxAttempts    int             `json:"max_attempts"`
 	TimeoutSeconds int             `json:"timeout_seconds"`
 	CorrelationID  *string         `json:"correlation_id,omitempty"`
+	LastError      *string         `json:"last_error,omitempty"`
+	RunAt          string          `json:"run_at,omitempty"`
 	CreatedAt      string          `json:"created_at"`
 	UpdatedAt      string          `json:"updated_at"`
 	Links          JobLinks        `json:"links"`
