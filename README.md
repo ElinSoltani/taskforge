@@ -28,13 +28,45 @@ Worker logs will show the `ping` handler running.
 
 ```bash
 # Postgres on :5433, Redis on :6380 (see docker-compose ports)
-export POSTGRES_DSN="postgres://taskforge:taskforge@localhost:5433/taskforge?sslmode=disable"
-export REDIS_ADDR="localhost:6380"
-psql "$POSTGRES_DSN" -f migrations/001_init.up.sql
-# Rollback: psql "$POSTGRES_DSN" -f migrations/001_init.down.sql
+export POSTGRES_HOST=localhost POSTGRES_PORT=5433
+export POSTGRES_USER=taskforge POSTGRES_PASSWORD=taskforge POSTGRES_DB=taskforge
+export POSTGRES_MIGRATION_PATH=file://migrations
+export REDIS_ADDR=localhost:6380
 
-go run ./cmd/api
+go run ./cmd/api    # runs migrations on startup (go-pg + golang-migrate)
 go run ./cmd/worker
+```
+
+## How REST talks to domain
+
+REST never imports postgres/redis. The flow is:
+
+```
+HTTP JSON → rest/dto (bind + Validate) → mapper ToCreateJobInput → service → repository → infrastructure
+domain model ← service ← repository
+domain model → mapper JobResponseFromDomain → rest/dto → HTTP JSON
+```
+
+| Layer | Responsibility |
+|-------|----------------|
+| `interface/rest/dto` | Request/response shapes, field validation, domain mapping |
+| `interface/rest/handler` | Gin binding, status codes, error mapping |
+| `service` | Business rules (idempotency, enqueue workflow) |
+| `domain/model` | Core types (`Job`, `CreateJobInput`) |
+
+## Layout (aligned with other Backend services)
+
+```
+domain/model/          # Job aggregate
+domain/repository/     # JobStore, JobQueue interface signatures
+domain/handler/        # JobHandler interface
+repository/            # Thin delegates to infrastructure
+service/               # Use cases
+infrastructure/postgres/
+  main.go              # NewPostgres, Ping, migrations
+  dto/ + mapper        # DB rows ↔ domain model
+infrastructure/redis/
+  main.go              # NewRedis, Ping
 ```
 
 ## Architecture (this slice)

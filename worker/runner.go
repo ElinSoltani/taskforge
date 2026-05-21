@@ -6,22 +6,24 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/taskforge/taskforge/domain"
+	domainerror "github.com/taskforge/taskforge/domain/error"
+	domainhandler "github.com/taskforge/taskforge/domain/handler"
+	"github.com/taskforge/taskforge/domain/model"
+	"github.com/taskforge/taskforge/repository"
 )
 
 type Runner struct {
-	repo     domain.JobRepository
-	queue    domain.Queue
-	registry map[string]domain.JobHandler
+	repo     *repository.Repository
+	registry map[string]domainhandler.JobHandler
 	workerID string
 }
 
-func NewRunner(repo domain.JobRepository, queue domain.Queue, workerID string, handlers map[string]domain.JobHandler) *Runner {
-	return &Runner{repo: repo, queue: queue, registry: handlers, workerID: workerID}
+func NewRunner(repo *repository.Repository, workerID string, handlers map[string]domainhandler.JobHandler) *Runner {
+	return &Runner{repo: repo, registry: handlers, workerID: workerID}
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	if err := r.queue.EnsureGroup(ctx); err != nil {
+	if err := r.repo.EnsureGroup(ctx); err != nil {
 		return err
 	}
 	slog.Info("worker started", "worker_id", r.workerID)
@@ -34,7 +36,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		default:
 		}
 
-		msg, err := r.queue.Dequeue(ctx)
+		msg, err := r.repo.Dequeue(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -52,26 +54,25 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) process(ctx context.Context, msg *domain.ConsumedMessage) error {
+func (r *Runner) process(ctx context.Context, msg *model.ConsumedMessage) error {
 	job, err := r.repo.Claim(ctx, msg.Payload.JobID)
 	if err != nil {
-		_ = r.queue.Ack(ctx, msg.Stream, msg.MessageID)
+		_ = r.repo.Ack(ctx, msg.Stream, msg.MessageID)
 		return err
 	}
 
 	handler, ok := r.registry[job.JobType]
 	if !ok {
 		slog.Error("unknown job type", "job_type", job.JobType)
-		_ = r.queue.Ack(ctx, msg.Stream, msg.MessageID)
-		return domain.ErrInvalidInput
+		_ = r.repo.Ack(ctx, msg.Stream, msg.MessageID)
+		return domainerror.ErrInvalidInput
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(job.TimeoutSeconds)*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	err = handler.Execute(runCtx, job)
-	if err != nil {
+	if err := handler.Execute(runCtx, job); err != nil {
 		slog.Error("handler failed", "job_id", job.ID, "error", err)
 		return err
 	}
@@ -79,7 +80,7 @@ func (r *Runner) process(ctx context.Context, msg *domain.ConsumedMessage) error
 	if err := r.repo.Complete(ctx, job.ID); err != nil {
 		return err
 	}
-	if err := r.queue.Ack(ctx, msg.Stream, msg.MessageID); err != nil {
+	if err := r.repo.Ack(ctx, msg.Stream, msg.MessageID); err != nil {
 		return err
 	}
 
@@ -92,10 +93,9 @@ func (r *Runner) process(ctx context.Context, msg *domain.ConsumedMessage) error
 	return nil
 }
 
-// PingHandler is the default job handler for smoke tests.
 type PingHandler struct{}
 
-func (PingHandler) Execute(ctx context.Context, job *domain.Job) error {
+func (PingHandler) Execute(ctx context.Context, job *model.Job) error {
 	var p struct {
 		Message string `json:"message"`
 	}

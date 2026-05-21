@@ -7,27 +7,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/taskforge/taskforge/domain"
+	domainerror "github.com/taskforge/taskforge/domain/error"
+	"github.com/taskforge/taskforge/domain/model"
 )
 
-type JobService struct {
-	repo  domain.JobRepository
-	queue domain.Queue
-}
-
-func NewJobService(repo domain.JobRepository, queue domain.Queue) *JobService {
-	return &JobService{repo: repo, queue: queue}
-}
-
-func (s *JobService) Create(ctx context.Context, in domain.CreateJobInput) (*domain.Job, bool, error) {
+func (s *jobService) Create(ctx context.Context, in model.CreateJobInput) (*model.Job, bool, error) {
 	if in.JobType == "" {
-		return nil, false, domain.ErrInvalidInput
+		return nil, false, domainerror.ErrInvalidInput
 	}
 	if len(in.Payload) == 0 {
 		in.Payload = json.RawMessage(`{}`)
 	}
 	if !json.Valid(in.Payload) {
-		return nil, false, domain.ErrInvalidInput
+		return nil, false, domainerror.ErrInvalidInput
 	}
 
 	if in.IdempotencyKey != nil && *in.IdempotencyKey != "" {
@@ -35,7 +27,7 @@ func (s *JobService) Create(ctx context.Context, in domain.CreateJobInput) (*dom
 		if err == nil {
 			return existing, true, nil
 		}
-		if !errors.Is(err, domain.ErrJobNotFound) {
+		if !errors.Is(err, domainerror.ErrJobNotFound) {
 			return nil, false, err
 		}
 	}
@@ -45,11 +37,11 @@ func (s *JobService) Create(ctx context.Context, in domain.CreateJobInput) (*dom
 		return nil, false, err
 	}
 	now := time.Now().UTC()
-	job := &domain.Job{
+	job := &model.Job{
 		ID:             id,
 		JobType:        in.JobType,
 		Payload:        in.Payload,
-		Status:         domain.StatusPending,
+		Status:         model.JobStatusPending,
 		RunAt:          now,
 		MaxAttempts:    5,
 		TimeoutSeconds: 300,
@@ -69,16 +61,16 @@ func (s *JobService) Create(ctx context.Context, in domain.CreateJobInput) (*dom
 		return nil, false, err
 	}
 
-	if err := s.queue.Enqueue(ctx, domain.QueueMessage{JobID: job.ID, JobType: job.JobType}); err != nil {
+	if err := s.repo.Enqueue(ctx, model.QueueMessage{JobID: job.ID, JobType: job.JobType}); err != nil {
 		return nil, false, err
 	}
-	if err := s.repo.UpdateStatus(ctx, job.ID, domain.StatusQueued); err != nil {
+	if err := s.repo.UpdateStatus(ctx, job.ID, model.JobStatusQueued); err != nil {
 		return nil, false, err
 	}
-	job.Status = domain.StatusQueued
+	job.Status = model.JobStatusQueued
 	return job, false, nil
 }
 
-func (s *JobService) Get(ctx context.Context, id uuid.UUID) (*domain.Job, error) {
+func (s *jobService) Get(ctx context.Context, id uuid.UUID) (*model.Job, error) {
 	return s.repo.GetByID(ctx, id)
 }

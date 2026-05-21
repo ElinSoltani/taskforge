@@ -8,9 +8,10 @@ import (
 	"syscall"
 
 	"github.com/taskforge/taskforge/config"
-	"github.com/taskforge/taskforge/domain"
+	domainhandler "github.com/taskforge/taskforge/domain/handler"
 	"github.com/taskforge/taskforge/infrastructure/postgres"
-	redisq "github.com/taskforge/taskforge/infrastructure/redis"
+	"github.com/taskforge/taskforge/infrastructure/redis"
+	"github.com/taskforge/taskforge/repository"
 	"github.com/taskforge/taskforge/worker"
 )
 
@@ -21,21 +22,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := postgres.New(cfg.Postgres.DSN)
+	pg, err := postgres.NewPostgres()
 	if err != nil {
 		slog.Error("postgres", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer pg.Close()
 
-	queue := redisq.NewQueue(cfg)
-	defer queue.Client().Close()
+	rdb, err := redis.NewRedis()
+	if err != nil {
+		slog.Error("redis", "error", err)
+		os.Exit(1)
+	}
+	defer rdb.Close()
 
-	handlers := map[string]domain.JobHandler{
+	repo := repository.NewRepository(pg, rdb)
+	handlers := map[string]domainhandler.JobHandler{
 		"ping": worker.PingHandler{},
 	}
 
-	runner := worker.NewRunner(store, queue, cfg.Worker.ConsumerName, handlers)
+	runner := worker.NewRunner(repo, cfg.Worker.ConsumerName, handlers)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

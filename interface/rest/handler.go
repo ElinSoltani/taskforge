@@ -1,58 +1,47 @@
 package rest
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/taskforge/taskforge/domain"
+	"github.com/taskforge/taskforge/interface/rest/dto"
 	"github.com/taskforge/taskforge/service"
 )
 
 type Handler struct {
-	jobs *service.JobService
+	jobs    service.JobService
+	baseURL string
 }
 
-func NewHandler(jobs *service.JobService) *Handler {
-	return &Handler{jobs: jobs}
+func NewHandler(jobs service.JobService, baseURL string) *Handler {
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+	return &Handler{jobs: jobs, baseURL: baseURL}
 }
 
-type createJobRequest struct {
-	JobType   string          `json:"job_type" binding:"required"`
-	Payload   json.RawMessage `json:"payload"`
-	CorrelationID *string     `json:"correlation_id"`
-}
-
-type jobResponse struct {
-	ID        string `json:"id"`
-	JobType   string `json:"job_type"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
-}
-
+// CreateJob accepts a job submission, validates the REST DTO, maps to domain, and delegates to service.
 func (h *Handler) CreateJob(c *gin.Context) {
-	var req createJobRequest
+	var req dto.CreateJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeBindError(c, err)
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeValidationError(c, err)
 		return
 	}
 
-	var idem *string
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
-		idem = &k
+	headers := &dto.CreateJobHeaders{IdempotencyKey: c.GetHeader("Idempotency-Key")}
+	if err := headers.Validate(); err != nil {
+		writeValidationError(c, err)
+		return
 	}
 
-	job, duplicate, err := h.jobs.Create(c.Request.Context(), domain.CreateJobInput{
-		JobType:        req.JobType,
-		Payload:        req.Payload,
-		IdempotencyKey: idem,
-		CorrelationID:  req.CorrelationID,
-	})
+	input := req.ToCreateJobInput(headers)
+	job, duplicate, err := h.jobs.Create(c.Request.Context(), input)
 	if err != nil {
-		writeError(c, err)
+		writeDomainError(c, err)
 		return
 	}
 
@@ -60,40 +49,31 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	if duplicate {
 		code = http.StatusOK
 	}
-	c.JSON(code, jobResponse{
-		ID:        job.ID.String(),
-		JobType:   job.JobType,
-		Status:    string(job.Status),
-		CreatedAt: job.CreatedAt.Format(time.RFC3339),
-	})
+	c.JSON(code, dto.CreateJobResponseFromDomain(job, duplicate, h.baseURL))
 }
 
+// GetJob loads a job by id: validate path param → domain UUID → service → response DTO.
 func (h *Handler) GetJob(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id"})
+	var params dto.GetJobParams
+	if err := c.ShouldBindUri(&params); err != nil {
+		writeBindError(c, err)
 		return
 	}
+	if err := params.Validate(); err != nil {
+		writeValidationError(c, err)
+		return
+	}
+
+	id, err := dto.ParseJobID(params.ID)
+	if err != nil {
+		writeValidationError(c, err)
+		return
+	}
+
 	job, err := h.jobs.Get(c.Request.Context(), id)
 	if err != nil {
-		writeError(c, err)
+		writeDomainError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, jobResponse{
-		ID:        job.ID.String(),
-		JobType:   job.JobType,
-		Status:    string(job.Status),
-		CreatedAt: job.CreatedAt.Format(time.RFC3339),
-	})
-}
-
-func writeError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, domain.ErrJobNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, domain.ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-	}
+	c.JSON(http.StatusOK, dto.JobResponseFromDomain(job, h.baseURL))
 }

@@ -6,57 +6,36 @@ import (
 	"fmt"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/taskforge/taskforge/config"
-	"github.com/taskforge/taskforge/domain"
+	"github.com/taskforge/taskforge/domain/model"
 )
 
-type Queue struct {
-	client *goredis.Client
-	cfg    config.RedisConfig
-	worker config.WorkerConfig
-}
-
-func NewQueue(cfg *config.Config) *Queue {
-	return &Queue{
-		client: goredis.NewClient(&goredis.Options{
-			Addr:     cfg.Redis.Addr,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
-		}),
-		cfg:    cfg.Redis,
-		worker: cfg.Worker,
-	}
-}
-
-func (q *Queue) Client() *goredis.Client { return q.client }
-
-func (q *Queue) EnsureGroup(ctx context.Context) error {
-	err := q.client.XGroupCreateMkStream(ctx, q.cfg.Stream, q.cfg.ConsumerGroup, "0").Err()
+func (r *redisClient) EnsureGroup(ctx context.Context) error {
+	err := r.db.XGroupCreateMkStream(ctx, cfg.Stream, cfg.ConsumerGroup, "0").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		return fmt.Errorf("create group: %w", err)
+		return fmt.Errorf("create consumer group: %w", err)
 	}
 	return nil
 }
 
-func (q *Queue) Enqueue(ctx context.Context, msg domain.QueueMessage) error {
+func (r *redisClient) Enqueue(ctx context.Context, msg model.QueueMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	_, err = q.client.XAdd(ctx, &goredis.XAddArgs{
-		Stream: q.cfg.Stream,
+	_, err = r.db.XAdd(ctx, &goredis.XAddArgs{
+		Stream: cfg.Stream,
 		Values: map[string]interface{}{"message": string(data)},
 	}).Result()
 	return err
 }
 
-func (q *Queue) Dequeue(ctx context.Context) (*domain.ConsumedMessage, error) {
-	streams, err := q.client.XReadGroup(ctx, &goredis.XReadGroupArgs{
-		Group:    q.cfg.ConsumerGroup,
-		Consumer: q.worker.ConsumerName,
-		Streams:  []string{q.cfg.Stream, ">"},
+func (r *redisClient) Dequeue(ctx context.Context) (*model.ConsumedMessage, error) {
+	streams, err := r.db.XReadGroup(ctx, &goredis.XReadGroupArgs{
+		Group:    cfg.ConsumerGroup,
+		Consumer: cfg.ConsumerName,
+		Streams:  []string{cfg.Stream, ">"},
 		Count:    1,
-		Block:    q.worker.BlockTimeout,
+		Block:    blockDuration(),
 	}).Result()
 	if err != nil {
 		if err == goredis.Nil {
@@ -67,22 +46,24 @@ func (q *Queue) Dequeue(ctx context.Context) (*domain.ConsumedMessage, error) {
 	for _, s := range streams {
 		for _, m := range s.Messages {
 			raw, _ := m.Values["message"].(string)
-			var payload domain.QueueMessage
+			var payload model.QueueMessage
 			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 				return nil, err
 			}
-			return &domain.ConsumedMessage{Stream: s.Stream, MessageID: m.ID, Payload: payload}, nil
+			return &model.ConsumedMessage{
+				Stream:    s.Stream,
+				MessageID: m.ID,
+				Payload:   payload,
+			}, nil
 		}
 	}
 	return nil, nil
 }
 
-func (q *Queue) Ack(ctx context.Context, stream, messageID string) error {
-	return q.client.XAck(ctx, stream, q.cfg.ConsumerGroup, messageID).Err()
+func (r *redisClient) Ack(ctx context.Context, stream, messageID string) error {
+	return r.db.XAck(ctx, stream, cfg.ConsumerGroup, messageID).Err()
 }
 
-func (q *Queue) Ping(ctx context.Context) error {
-	return q.client.Ping(ctx).Err()
+func (r *redisClient) Ping(ctx context.Context) error {
+	return r.db.Ping(ctx).Err()
 }
-
-var _ domain.Queue = (*Queue)(nil)

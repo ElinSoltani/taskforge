@@ -64,7 +64,12 @@ services:
       - "8080:8080"
     environment:
       HTTP_ADDR: ":8080"
-      POSTGRES_DSN: postgres://taskforge:taskforge@postgres:5432/taskforge?sslmode=disable
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: taskforge
+      POSTGRES_PASSWORD: taskforge
+      POSTGRES_DB: taskforge
+      POSTGRES_MIGRATION_PATH: file://migrations
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers
@@ -84,7 +89,12 @@ services:
       context: .
       target: worker
     environment:
-      POSTGRES_DSN: postgres://taskforge:taskforge@postgres:5432/taskforge?sslmode=disable
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: taskforge
+      POSTGRES_PASSWORD: taskforge
+      POSTGRES_DB: taskforge
+      POSTGRES_MIGRATION_PATH: file://migrations
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers

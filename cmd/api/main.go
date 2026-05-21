@@ -11,8 +11,9 @@ import (
 
 	"github.com/taskforge/taskforge/config"
 	"github.com/taskforge/taskforge/infrastructure/postgres"
-	redisq "github.com/taskforge/taskforge/infrastructure/redis"
+	"github.com/taskforge/taskforge/infrastructure/redis"
 	"github.com/taskforge/taskforge/interface/rest"
+	"github.com/taskforge/taskforge/repository"
 	"github.com/taskforge/taskforge/service"
 )
 
@@ -23,24 +24,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := postgres.New(cfg.Postgres.DSN)
+	pg, err := postgres.NewPostgres()
 	if err != nil {
 		slog.Error("postgres", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer pg.Close()
 
-	queue := redisq.NewQueue(cfg)
-	defer queue.Client().Close()
+	rdb, err := redis.NewRedis()
+	if err != nil {
+		slog.Error("redis", "error", err)
+		os.Exit(1)
+	}
+	defer rdb.Close()
 
-	if err := queue.EnsureGroup(context.Background()); err != nil {
+	if err := rdb.EnsureGroup(context.Background()); err != nil {
 		slog.Error("redis group", "error", err)
 		os.Exit(1)
 	}
 
-	jobs := service.NewJobService(store, queue)
-	handler := rest.NewHandler(jobs)
-	router := rest.NewRouter(handler, store, queue)
+	repo := repository.NewRepository(pg, rdb)
+	jobs := service.NewJobService(repo)
+	handler := rest.NewHandler(jobs, cfg.HTTP.BaseURL)
+	router := rest.NewRouter(handler, pgReadiness{}, rdbReadiness{})
 
 	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: router}
 	go func() {
@@ -59,3 +65,11 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 }
+
+type pgReadiness struct{}
+
+func (pgReadiness) Ping(ctx context.Context) error { return postgres.Ping(ctx) }
+
+type rdbReadiness struct{}
+
+func (rdbReadiness) Ping(ctx context.Context) error { return redis.Ping(ctx) }

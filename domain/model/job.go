@@ -1,4 +1,4 @@
-package domain
+package model
 
 import (
 	"encoding/json"
@@ -7,21 +7,21 @@ import (
 	"github.com/google/uuid"
 )
 
-type Status string
+type JobStatus string
 
 const (
-	StatusPending Status = "pending"
-	StatusQueued  Status = "queued"
-	StatusRunning Status = "running"
-	StatusCompleted Status = "completed"
-	StatusDead    Status = "dead"
+	JobStatusPending   JobStatus = "pending"
+	JobStatusQueued    JobStatus = "queued"
+	JobStatusRunning   JobStatus = "running"
+	JobStatusCompleted JobStatus = "completed"
+	JobStatusDead      JobStatus = "dead"
 )
 
 type Job struct {
 	ID             uuid.UUID
 	JobType        string
 	Payload        json.RawMessage
-	Status         Status
+	Status         JobStatus
 	RunAt          time.Time
 	MaxAttempts    int
 	AttemptCount   int
@@ -42,4 +42,10 @@ type CreateJobInput struct {
 type QueueMessage struct {
 	JobID   uuid.UUID `json:"job_id"`
 	JobType string    `json:"job_type"`
+}
+
+type ConsumedMessage struct {
+	Stream    string
+	MessageID string
+	Payload   QueueMessage
 }
