@@ -71,7 +71,7 @@ services:
       POSTGRES_USER: taskforge
       POSTGRES_PASSWORD: taskforge
       POSTGRES_DB: taskforge
-      POSTGRES_MIGRATION_PATH: file://migrations
+      POSTGRES_MIGRATION_PATH: file:///app/migrations
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers
@@ -96,7 +96,7 @@ services:
       POSTGRES_USER: taskforge
       POSTGRES_PASSWORD: taskforge
       POSTGRES_DB: taskforge
-      POSTGRES_MIGRATION_PATH: file://migrations
+      POSTGRES_MIGRATION_PATH: file:///app/migrations
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers
