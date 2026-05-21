@@ -13,13 +13,14 @@ import (
 )
 
 type Runner struct {
-	repo     *repository.Repository
-	registry map[string]domainhandler.JobHandler
-	workerID string
+	repo       *repository.Repository
+	registry   map[string]domainhandler.JobHandler
+	workerID   string
+	retryCfg   RetryConfig
 }
 
-func NewRunner(repo *repository.Repository, workerID string, handlers map[string]domainhandler.JobHandler) *Runner {
-	return &Runner{repo: repo, registry: handlers, workerID: workerID}
+func NewRunner(repo *repository.Repository, workerID string, handlers map[string]domainhandler.JobHandler, retryCfg RetryConfig) *Runner {
+	return &Runner{repo: repo, registry: handlers, workerID: workerID, retryCfg: retryCfg}
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -64,6 +65,10 @@ func (r *Runner) process(ctx context.Context, msg *model.ConsumedMessage) error 
 	handler, ok := r.registry[job.JobType]
 	if !ok {
 		slog.Error("unknown job type", "job_type", job.JobType)
+		_ = HandleFailure(ctx, r.repo, job, &domainerror.TerminalError{
+			Code:    "unknown_job_type",
+			Message: "no handler registered for job type: " + job.JobType,
+		}, r.retryCfg)
 		_ = r.repo.Ack(ctx, msg.Stream, msg.MessageID)
 		return domainerror.ErrInvalidInput
 	}
@@ -72,9 +77,14 @@ func (r *Runner) process(ctx context.Context, msg *model.ConsumedMessage) error 
 	defer cancel()
 
 	start := time.Now()
-	if err := handler.Execute(runCtx, job); err != nil {
-		slog.Error("handler failed", "job_id", job.ID, "error", err)
-		return err
+	execErr := handler.Execute(runCtx, job)
+
+	if execErr != nil {
+		if err := HandleFailure(ctx, r.repo, job, execErr, r.retryCfg); err != nil {
+			slog.Error("handle failure failed", "job_id", job.ID, "error", err)
+		}
+		_ = r.repo.Ack(ctx, msg.Stream, msg.MessageID)
+		return execErr
 	}
 
 	if err := r.repo.Complete(ctx, job.ID); err != nil {
@@ -93,13 +103,25 @@ func (r *Runner) process(ctx context.Context, msg *model.ConsumedMessage) error 
 	return nil
 }
 
+// PingHandler processes ping jobs.
 type PingHandler struct{}
 
 func (PingHandler) Execute(ctx context.Context, job *model.Job) error {
 	var p struct {
 		Message string `json:"message"`
+		Fail    bool   `json:"fail"`
 	}
 	_ = json.Unmarshal(job.Payload, &p)
+	if p.Fail {
+		return &domainerror.RetryableError{Code: "simulated_failure", Message: "ping fail requested"}
+	}
 	slog.InfoContext(ctx, "ping", "job_id", job.ID, "message", p.Message)
 	return nil
+}
+
+// FailHandler always returns a retryable error (for backoff testing).
+type FailHandler struct{}
+
+func (FailHandler) Execute(ctx context.Context, job *model.Job) error {
+	return &domainerror.RetryableError{Code: "intentional_fail", Message: "fail job type always retries"}
 }

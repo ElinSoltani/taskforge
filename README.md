@@ -8,6 +8,12 @@ Distributed job processing: REST API → PostgreSQL → Redis Streams → worker
 docker compose up --build
 ```
 
+| Service | Port (host) |
+|---------|-------------|
+| API | `8080` |
+| Postgres | `5433` |
+| Redis | `6380` |
+
 Create a job:
 
 ```bash
@@ -22,57 +28,204 @@ Check status (use `id` from the response):
 curl -s http://localhost:8080/v1/jobs/<job-id>
 ```
 
-Worker logs will show the `ping` handler running.
+Optional idempotency:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/jobs \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: my-unique-key-123' \
+  -d '{"job_type":"ping","payload":{"message":"hello"}}'
+```
+
+Worker logs will show the handler running. Poll `GET /v1/jobs/<id>` until `status` is `completed`.
+
+## API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/jobs` | Create job (`202 Accepted`, or `200` if idempotent duplicate) |
+| `GET` | `/v1/jobs/{id}` | Job status and metadata |
+| `GET` | `/health` | Liveness |
+| `GET` | `/ready` | Postgres + Redis readiness |
+
+## Built-in job types
+
+| `job_type` | Behavior |
+|------------|----------|
+| `ping` | Logs payload `message`; set `"fail": true` in payload to simulate a retryable error |
+| `fail` | Always fails with a retryable error until `max_attempts` |
+
+## Job statuses
+
+`pending` → `queued` → `running` → `completed`
+
+On failure (with attempts left): `running` → `retrying` → (scheduler) → `queued` → `running` …
+
+Terminal: `dead` (max attempts, `TerminalError`, or unknown job type)
+
+## Makefile
+
+| Command | Action |
+|---------|--------|
+| `make up` | `docker compose up --build -d` |
+| `make down` | Stop stack |
+| `make logs` | Follow `api` + `worker` logs |
+| `make build` | Build `bin/api` and `bin/worker` locally |
+| `make migrate` | Apply SQL migrations via Compose (`001` + `002`) |
+| `make migrate-down` | Roll back `002` then `001` (drops `jobs`) |
+| `make test-job` | POST a sample `ping` job |
 
 ## Local development (without Docker)
 
 ```bash
-# Postgres on :5433, Redis on :6380 (see docker-compose ports)
 export POSTGRES_HOST=localhost POSTGRES_PORT=5433
 export POSTGRES_USER=taskforge POSTGRES_PASSWORD=taskforge POSTGRES_DB=taskforge
 export POSTGRES_MIGRATION_PATH=file://migrations
 export REDIS_ADDR=localhost:6380
+export REDIS_STREAM=taskforge:queue:normal
+export REDIS_CONSUMER_GROUP=taskforge-workers
+export WORKER_CONSUMER_NAME=worker-1
 
-go run ./cmd/api    # runs migrations on startup (go-pg + golang-migrate)
-go run ./cmd/worker
+# Optional: backoff / HTTP
+export BACKOFF_BASE=5s BACKOFF_MAX=15m RETRY_SCHEDULER_INTERVAL=5s
+export HTTP_BASE_URL=http://localhost:8080
+
+go run ./cmd/api     # applies all migrations in migrations/ on startup
+go run ./cmd/worker  # retry scheduler runs in background
 ```
+
+Or apply migrations manually:
+
+```bash
+psql "postgres://taskforge:taskforge@localhost:5433/taskforge?sslmode=disable" \
+  -f migrations/001_init.up.sql \
+  -f migrations/002_jobs_retry_index.up.sql
+```
+
+## Migrations
+
+Migrations live in [`migrations/`](migrations/). Applied automatically when **api** or **worker** starts (`golang-migrate`, path `POSTGRES_MIGRATION_PATH`, default `file://migrations`). The Compose `migrate` service runs the same SQL files before api/worker start.
+
+| Version | Up | Down | Purpose |
+|---------|----|------|---------|
+| `001` | `001_init.up.sql` | `001_init.down.sql` | `jobs` table, idempotency index, status index |
+| `002` | `002_jobs_retry_index.up.sql` | `002_jobs_retry_index.down.sql` | Index `(status, run_at)` for retry scheduler |
+
+```bash
+make migrate        # both 001 and 002 (Docker)
+make migrate-down   # 002 down, then 001 down (drops jobs table)
+```
+
+## Configuration
+
+### HTTP
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `HTTP_ADDR` | `:8080` | API listen address |
+| `HTTP_BASE_URL` | `http://localhost:8080` | Base URL in job response `links.self` |
+
+### Postgres
+
+| Env | Default (Docker) | Description |
+|-----|------------------|-------------|
+| `POSTGRES_HOST` | `postgres` | Host |
+| `POSTGRES_PORT` | `5432` | Port |
+| `POSTGRES_USER` | `taskforge` | User |
+| `POSTGRES_PASSWORD` | `taskforge` | Password |
+| `POSTGRES_DB` | `taskforge` | Database |
+| `POSTGRES_MIGRATION_PATH` | `file://migrations` | golang-migrate source |
+
+### Redis
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `REDIS_ADDR` | `redis:6379` | Address |
+| `REDIS_PASSWORD` | _(empty)_ | Password |
+| `REDIS_DB` | `0` | DB number |
+| `REDIS_STREAM` | `taskforge:queue:normal` | Stream for job messages |
+| `REDIS_CONSUMER_GROUP` | `taskforge-workers` | Consumer group |
+
+### Worker
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `WORKER_CONSUMER_NAME` | `worker-1` | Redis consumer name |
+| `WORKER_BLOCK_TIMEOUT` | `2s` | `XREADGROUP` block timeout |
+
+### Retries (exponential backoff)
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `BACKOFF_BASE` | `5s` | Base delay (`base * 2^attempt`) |
+| `BACKOFF_MAX` | `15m` | Cap on backoff delay |
+| `RETRY_SCHEDULER_INTERVAL` | `5s` | How often due `retrying` jobs are re-enqueued |
+
+On handler failure the worker:
+
+1. Sets `retrying` with `run_at = now + backoff` (full jitter)
+2. **Acks** the Redis message
+3. **Scheduler** promotes due jobs → `queued` and **XADD**s again
+
+Test retries:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"job_type":"ping","payload":{"fail":true}}'
+
+curl -s -X POST http://localhost:8080/v1/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"job_type":"fail","payload":{}}'
+```
+
+Handlers may return `domain/error.RetryableError` or `TerminalError` to control retry vs dead.
 
 ## How REST talks to domain
 
-REST never imports postgres/redis. The flow is:
+REST never imports postgres/redis:
 
 ```
-HTTP JSON → rest/dto (bind + Validate) → mapper ToCreateJobInput → service → repository → infrastructure
+HTTP JSON → rest/dto (bind + Validate) → mapper → service → repository → infrastructure
 domain model ← service ← repository
-domain model → mapper JobResponseFromDomain → rest/dto → HTTP JSON
+domain model → mapper → rest/dto → HTTP JSON
 ```
 
 | Layer | Responsibility |
 |-------|----------------|
-| `interface/rest/dto` | Request/response shapes, field validation, domain mapping |
+| `interface/rest/dto` | Request/response shapes, validation, domain mapping |
 | `interface/rest/handler` | Gin binding, status codes, error mapping |
 | `service` | Business rules (idempotency, enqueue workflow) |
 | `domain/model` | Core types (`Job`, `CreateJobInput`) |
+| `repository` | Delegates to `JobStore` + `JobQueue` |
+| `infrastructure/postgres` | go-pg, DTOs, mappers |
+| `infrastructure/redis` | Redis Streams queue |
 
-## Layout (aligned with other Backend services)
+## Project layout
 
 ```
-domain/model/          # Job aggregate
-domain/repository/     # JobStore, JobQueue interface signatures
-domain/handler/        # JobHandler interface
-repository/            # Thin delegates to infrastructure
-service/               # Use cases
+cmd/api/               # HTTP server
+cmd/worker/            # Consumer + retry scheduler
+config/
+domain/model/
+domain/repository/     # JobStore, JobQueue interfaces
+domain/handler/
+domain/error/
+repository/
+service/               # main.go: JobService + Repository interfaces
+worker/                # Runner, backoff, scheduler, built-in handlers
+interface/rest/dto/
 infrastructure/postgres/
-  main.go              # NewPostgres, Ping, migrations
-  dto/ + mapper        # DB rows ↔ domain model
 infrastructure/redis/
-  main.go              # NewRedis, Ping
+migrations/
 ```
 
-## Architecture (this slice)
+## Architecture
 
-1. **POST /v1/jobs** — persist job (`pending` → `queued`), **XADD** to Redis stream
-2. **Worker** — **XREADGROUP**, claim job in Postgres (`running`), run handler, **XACK**, mark `completed`
+1. **POST /v1/jobs** — persist (`pending`), **XADD** Redis, `queued`
+2. **Worker** — **XREADGROUP**, claim `running`, run handler
+3. **Success** — `completed`, **XACK**
+4. **Failure** — `retrying` + backoff, **XACK**; scheduler re-enqueues when due
 
 Stream: `taskforge:queue:normal` · Consumer group: `taskforge-workers`
 

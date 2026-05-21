@@ -14,6 +14,8 @@ const (
 	JobStatusQueued    JobStatus = "queued"
 	JobStatusRunning   JobStatus = "running"
 	JobStatusCompleted JobStatus = "completed"
+	JobStatusFailed    JobStatus = "failed"
+	JobStatusRetrying  JobStatus = "retrying"
 	JobStatusDead      JobStatus = "dead"
 )
 
@@ -28,8 +30,13 @@ type Job struct {
 	TimeoutSeconds int
 	IdempotencyKey *string
 	CorrelationID  *string
+	LastError      *string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+func (j *Job) HasAttemptsRemaining() bool {
+	return j.AttemptCount < j.MaxAttempts
 }
 
 type CreateJobInput struct {
