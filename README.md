@@ -78,7 +78,14 @@ Stream: `taskforge:queue:normal` · Consumer group: `taskforge-workers`
 
 ### Migrations
 
+| File | Purpose |
+|------|---------|
+| `001_init.up.sql` | `jobs` table |
+| `002_jobs_retry_index.up.sql` | Index on `(status, run_at)` for retries |
+
+Docker: SQL via `migrate` service; api/worker also run golang-migrate from `/app/migrations` (`POSTGRES_MIGRATION_PATH=file:///app/migrations`). Local: `file://migrations` (project root).
+
 | Command | Action |
 |---------|--------|
-| `make migrate` | Apply `001_init.up.sql` |
-| `make migrate-down` | Roll back `001_init.down.sql` (drops `jobs`) |
+| `make migrate` | Apply `001` + `002` (Compose) |
+| `make migrate-down` | Roll back `002` then `001` (drops `jobs`) |

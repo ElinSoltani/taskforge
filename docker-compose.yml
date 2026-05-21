@@ -36,7 +36,8 @@ services:
       PGPASSWORD: taskforge
     entrypoint: >
       sh -c "
-        psql -h postgres -U taskforge -d taskforge -f /migrations/001_init.up.sql
+        psql -h postgres -U taskforge -d taskforge -f /migrations/001_init.up.sql &&
+        psql -h postgres -U taskforge -d taskforge -f /migrations/002_jobs_retry_index.up.sql
       "
     restart: "no"
 
@@ -52,6 +53,7 @@ services:
       PGPASSWORD: taskforge
     entrypoint: >
       sh -c "
+        psql -h postgres -U taskforge -d taskforge -f /migrations/002_jobs_retry_index.down.sql &&
         psql -h postgres -U taskforge -d taskforge -f /migrations/001_init.down.sql
       "
     restart: "no"
@@ -69,7 +71,7 @@ services:
       POSTGRES_USER: taskforge
       POSTGRES_PASSWORD: taskforge
       POSTGRES_DB: taskforge
-      POSTGRES_MIGRATION_PATH: file://migrations
+      POSTGRES_MIGRATION_PATH: file:///app/migrations
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers
@@ -94,7 +96,7 @@ services:
       POSTGRES_USER: taskforge
       POSTGRES_PASSWORD: taskforge
       POSTGRES_DB: taskforge
-      POSTGRES_MIGRATION_PATH: file://migrations
+      POSTGRES_MIGRATION_PATH: file:///app/migrations
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers
