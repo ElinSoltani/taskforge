@@ -1,0 +1,103 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: taskforge
+      POSTGRES_PASSWORD: taskforge
+      POSTGRES_DB: taskforge
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskforge -d taskforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    environment:
+      PGPASSWORD: taskforge
+    entrypoint: >
+      sh -c "
+        psql -h postgres -U taskforge -d taskforge -f /migrations/001_init.up.sql
+      "
+    restart: "no"
+
+  migrate-down:
+    image: postgres:16-alpine
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    environment:
+      PGPASSWORD: taskforge
+    entrypoint: >
+      sh -c "
+        psql -h postgres -U taskforge -d taskforge -f /migrations/001_init.down.sql
+      "
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    ports:
+      - "8080:8080"
+    environment:
+      HTTP_ADDR: ":8080"
+      POSTGRES_DSN: postgres://taskforge:taskforge@postgres:5432/taskforge?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_STREAM: taskforge:queue:normal
+      REDIS_CONSUMER_GROUP: taskforge-workers
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      POSTGRES_DSN: postgres://taskforge:taskforge@postgres:5432/taskforge?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_STREAM: taskforge:queue:normal
+      REDIS_CONSUMER_GROUP: taskforge-workers
+      WORKER_CONSUMER_NAME: worker-1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+volumes:
+  postgres_data:
