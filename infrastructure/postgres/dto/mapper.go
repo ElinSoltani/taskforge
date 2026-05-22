@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"github.com/taskforge/taskforge/domain/enum"
 	"github.com/taskforge/taskforge/domain/model"
 )
 
@@ -12,7 +13,7 @@ func (d *Job) ToDomain() *model.Job {
 		ID:             d.ID,
 		JobType:        d.JobType,
 		Payload:        d.Payload,
-		Status:         model.JobStatus(d.Status),
+		Status:         enum.JobStatus(d.Status),
 		RunAt:          d.RunAt,
 		MaxAttempts:    d.MaxAttempts,
 		AttemptCount:   d.AttemptCount,

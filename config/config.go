@@ -16,6 +16,12 @@ type Config struct {
 	Redis    RedisConfig
 	Worker   WorkerConfig
 	Backoff  BackoffConfig
+	Service  ServiceConfig
+}
+
+type ServiceConfig struct {
+	MaxAttempts    int
+	TimeoutSeconds int
 }
 
 type BackoffConfig struct {
@@ -80,6 +86,10 @@ func Load() (*Config, error) {
 			BaseDelay:         envDuration("BACKOFF_BASE", 5*time.Second),
 			MaxDelay:          envDuration("BACKOFF_MAX", 15*time.Minute),
 			SchedulerInterval: envDuration("RETRY_SCHEDULER_INTERVAL", 5*time.Second),
+		},
+		Service: ServiceConfig{
+			MaxAttempts:    envInt("SERVICE_MAX_ATTEMPTS", 5),
+			TimeoutSeconds: envInt("SERVICE_TIMEOUT_SECONDS", 300),
 		},
 	}
 	if cfg.Postgres.Host == "" || cfg.Postgres.Database == "" {

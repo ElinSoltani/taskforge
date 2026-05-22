@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/taskforge/taskforge/domain/enum"
 	"github.com/taskforge/taskforge/domain/model"
 )
 
@@ -19,7 +20,7 @@ func (r *Repository) GetByIdempotencyKey(ctx context.Context, key string) (job *
 	return r.jobs.GetByIdempotencyKey(ctx, key)
 }
 
-func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.JobStatus) (err error) {
+func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status enum.JobStatus) (err error) {
 	return r.jobs.UpdateStatus(ctx, id, status)
 }
 

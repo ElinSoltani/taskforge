@@ -8,17 +8,19 @@ import (
 
 	"github.com/google/uuid"
 	domainerror "github.com/taskforge/taskforge/domain/error"
+	"github.com/taskforge/taskforge/domain/enum"
 	"github.com/taskforge/taskforge/domain/model"
 )
 
-func (s *jobService) Create(ctx context.Context, in model.CreateJobInput) (*model.Job, bool, error) {
-	if in.JobType == "" {
+func (s *jobService) Create(ctx context.Context, in *model.Job) (*model.Job, bool, error) {
+	if in == nil || in.JobType == "" {
 		return nil, false, domainerror.ErrInvalidInput
 	}
-	if len(in.Payload) == 0 {
-		in.Payload = json.RawMessage(`{}`)
+	payload := in.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
 	}
-	if !json.Valid(in.Payload) {
+	if !json.Valid(payload) {
 		return nil, false, domainerror.ErrInvalidInput
 	}
 
@@ -40,11 +42,11 @@ func (s *jobService) Create(ctx context.Context, in model.CreateJobInput) (*mode
 	job := &model.Job{
 		ID:             id,
 		JobType:        in.JobType,
-		Payload:        in.Payload,
-		Status:         model.JobStatusPending,
+		Payload:        payload,
+		Status:         enum.JobStatusPending,
 		RunAt:          now,
-		MaxAttempts:    5,
-		TimeoutSeconds: 300,
+		MaxAttempts:    s.maxAttempts,
+		TimeoutSeconds: s.timeoutSeconds,
 		IdempotencyKey: in.IdempotencyKey,
 		CorrelationID:  in.CorrelationID,
 		CreatedAt:      now,
@@ -64,10 +66,10 @@ func (s *jobService) Create(ctx context.Context, in model.CreateJobInput) (*mode
 	if err := s.repo.Enqueue(ctx, model.QueueMessage{JobID: job.ID, JobType: job.JobType}); err != nil {
 		return nil, false, err
 	}
-	if err := s.repo.UpdateStatus(ctx, job.ID, model.JobStatusQueued); err != nil {
+	if err := s.repo.UpdateStatus(ctx, job.ID, enum.JobStatusQueued); err != nil {
 		return nil, false, err
 	}
-	job.Status = model.JobStatusQueued
+	job.Status = enum.JobStatusQueued
 	return job, false, nil
 }
 

@@ -38,8 +38,8 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		return
 	}
 
-	input := req.ToCreateJobInput(headers)
-	job, duplicate, err := h.jobs.Create(c.Request.Context(), input)
+	jobIn := req.ToDomain(headers)
+	job, duplicate, err := h.jobs.Create(c.Request.Context(), jobIn)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -49,7 +49,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	if duplicate {
 		code = http.StatusOK
 	}
-	c.JSON(code, dto.CreateJobResponseFromDomain(job, duplicate, h.baseURL))
+	c.JSON(code, dto.FromDomain(job, duplicate, h.baseURL))
 }
 
 // GetJob loads a job by id: validate path param → domain UUID → service → response DTO.

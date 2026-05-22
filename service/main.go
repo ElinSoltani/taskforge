@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/taskforge/taskforge/config"
+	"github.com/taskforge/taskforge/domain/enum"
 	"github.com/taskforge/taskforge/domain/model"
 )
 
@@ -12,21 +14,27 @@ type Repository interface {
 	Create(ctx context.Context, job *model.Job) (err error)
 	GetByID(ctx context.Context, id uuid.UUID) (job *model.Job, err error)
 	GetByIdempotencyKey(ctx context.Context, key string) (job *model.Job, err error)
-	UpdateStatus(ctx context.Context, id uuid.UUID, status model.JobStatus) (err error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status enum.JobStatus) (err error)
 	Enqueue(ctx context.Context, msg model.QueueMessage) (err error)
 }
 
 // JobService is the application API consumed by REST and other entrypoints.
 type JobService interface {
-	Create(ctx context.Context, in model.CreateJobInput) (job *model.Job, duplicate bool, err error)
+	Create(ctx context.Context, job *model.Job) (created *model.Job, duplicate bool, err error)
 	Get(ctx context.Context, id uuid.UUID) (job *model.Job, err error)
 }
 
 type jobService struct {
-	repo Repository
+	repo           Repository
+	maxAttempts    int
+	timeoutSeconds int
 }
 
 // NewJobService wires the service layer to a repository implementation.
-func NewJobService(repo Repository) JobService {
-	return &jobService{repo: repo}
+func NewJobService(repo Repository, cfg config.ServiceConfig) JobService {
+	return &jobService{
+		repo:           repo,
+		maxAttempts:    cfg.MaxAttempts,
+		timeoutSeconds: cfg.TimeoutSeconds,
+	}
 }

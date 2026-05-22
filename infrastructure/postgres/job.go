@@ -7,6 +7,7 @@ import (
 	"github.com/go-pg/pg/v10"
 	"github.com/google/uuid"
 	domainerror "github.com/taskforge/taskforge/domain/error"
+	"github.com/taskforge/taskforge/domain/enum"
 	"github.com/taskforge/taskforge/domain/model"
 	"github.com/taskforge/taskforge/infrastructure/postgres/dto"
 )
@@ -42,7 +43,7 @@ func (p *postgres) GetByIdempotencyKey(ctx context.Context, key string) (*model.
 	return row.ToDomain(), nil
 }
 
-func (p *postgres) UpdateStatus(ctx context.Context, id uuid.UUID, status model.JobStatus) error {
+func (p *postgres) UpdateStatus(ctx context.Context, id uuid.UUID, status enum.JobStatus) error {
 	_, err := p.db.WithContext(ctx).Model(&dto.Job{}).
 		Set("status = ?", string(status)).
 		Set("updated_at = ?", time.Now().UTC()).
@@ -62,12 +63,12 @@ func (p *postgres) Claim(ctx context.Context, id uuid.UUID) (*model.Job, error) 
 			}
 			return err
 		}
-		if row.Status != string(model.JobStatusQueued) {
+		if row.Status != string(enum.JobStatusQueued) {
 			return domainerror.ErrInvalidTransition
 		}
 
 		now := time.Now().UTC()
-		row.Status = string(model.JobStatusRunning)
+		row.Status = string(enum.JobStatusRunning)
 		row.AttemptCount++
 		row.StartedAt = &now
 		row.UpdatedAt = now
@@ -91,7 +92,7 @@ func (p *postgres) Claim(ctx context.Context, id uuid.UUID) (*model.Job, error) 
 func (p *postgres) Complete(ctx context.Context, id uuid.UUID) error {
 	now := time.Now().UTC()
 	_, err := p.db.WithContext(ctx).Model(&dto.Job{}).
-		Set("status = ?", string(model.JobStatusCompleted)).
+		Set("status = ?", string(enum.JobStatusCompleted)).
 		Set("finished_at = ?", now).
 		Set("updated_at = ?", now).
 		Where("id = ?", id).
