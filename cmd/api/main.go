@@ -44,7 +44,7 @@ func main() {
 	}
 
 	repo := repository.NewRepository(pg, rdb)
-	jobs := service.NewJobService(repo)
+	jobs := service.NewJobService(repo, cfg.Service)
 	handler := rest.NewHandler(jobs, cfg.HTTP.BaseURL)
 	router := rest.NewRouter(handler, pgReadiness{}, rdbReadiness{})
 

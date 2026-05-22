@@ -9,8 +9,8 @@ import (
 	"github.com/taskforge/taskforge/domain/model"
 )
 
-// ToCreateJobInput maps a validated REST request into the domain create input.
-func (r *CreateJobRequest) ToCreateJobInput(headers *CreateJobHeaders) model.CreateJobInput {
+// ToDomain maps a validated REST request into a domain job (creation fields only).
+func (r *CreateJobRequest) ToDomain(headers *CreateJobHeaders) *model.Job {
 	payload := r.Payload
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
@@ -30,7 +30,7 @@ func (r *CreateJobRequest) ToCreateJobInput(headers *CreateJobHeaders) model.Cre
 		}
 	}
 
-	return model.CreateJobInput{
+	return &model.Job{
 		JobType:        strings.TrimSpace(r.JobType),
 		Payload:        payload,
 		IdempotencyKey: idem,
@@ -77,7 +77,7 @@ func JobResponseFromDomain(job *model.Job, baseURL string) JobResponse {
 	}
 }
 
-func CreateJobResponseFromDomain(job *model.Job, duplicate bool, baseURL string) CreateJobResponse {
+func FromDomain(job *model.Job, duplicate bool, baseURL string) CreateJobResponse {
 	return CreateJobResponse{
 		Job:       JobResponseFromDomain(job, baseURL),
 		Duplicate: duplicate,

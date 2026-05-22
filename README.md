@@ -14,30 +14,23 @@ docker compose up --build
 | Postgres | `5433` |
 | Redis | `6380` |
 
-Create a job:
-
 ```bash
+# Create
 curl -s -X POST http://localhost:8080/v1/jobs \
   -H 'Content-Type: application/json' \
   -d '{"job_type":"ping","payload":{"message":"hello"}}'
-```
 
-Check status (use `id` from the response):
-
-```bash
+# Status (replace <job-id> with id from response)
 curl -s http://localhost:8080/v1/jobs/<job-id>
-```
 
-Optional idempotency:
-
-```bash
+# Optional idempotency
 curl -s -X POST http://localhost:8080/v1/jobs \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: my-unique-key-123' \
   -d '{"job_type":"ping","payload":{"message":"hello"}}'
 ```
 
-Worker logs will show the handler running. Poll `GET /v1/jobs/<id>` until `status` is `completed`.
+Worker logs show the handler running. Poll `GET /v1/jobs/<id>` until `status` is `completed`.
 
 ## API
 
@@ -86,15 +79,16 @@ export REDIS_STREAM=taskforge:queue:normal
 export REDIS_CONSUMER_GROUP=taskforge-workers
 export WORKER_CONSUMER_NAME=worker-1
 
-# Optional: backoff / HTTP
+# Optional
 export BACKOFF_BASE=5s BACKOFF_MAX=15m RETRY_SCHEDULER_INTERVAL=5s
 export HTTP_BASE_URL=http://localhost:8080
+export SERVICE_MAX_ATTEMPTS=5 SERVICE_TIMEOUT_SECONDS=300
 
-go run ./cmd/api     # applies all migrations in migrations/ on startup
+go run ./cmd/api     # applies migrations on startup
 go run ./cmd/worker  # retry scheduler runs in background
 ```
 
-Or apply migrations manually:
+Manual migration (if needed):
 
 ```bash
 psql "postgres://taskforge:taskforge@localhost:5433/taskforge?sslmode=disable" \
@@ -104,17 +98,14 @@ psql "postgres://taskforge:taskforge@localhost:5433/taskforge?sslmode=disable" \
 
 ## Migrations
 
-Migrations live in [`migrations/`](migrations/). Applied automatically when **api** or **worker** starts (`golang-migrate`, path `POSTGRES_MIGRATION_PATH`, default `file://migrations`). The Compose `migrate` service runs the same SQL files before api/worker start.
+Files in [`migrations/`](migrations/). Applied automatically when **api** or **worker** starts (`golang-migrate`, `POSTGRES_MIGRATION_PATH`, default `file://migrations`). Compose also runs the same SQL via a `migrate` service before api/worker.
 
 | Version | Up | Down | Purpose |
 |---------|----|------|---------|
 | `001` | `001_init.up.sql` | `001_init.down.sql` | `jobs` table, idempotency index, status index |
 | `002` | `002_jobs_retry_index.up.sql` | `002_jobs_retry_index.down.sql` | Index `(status, run_at)` for retry scheduler |
 
-```bash
-make migrate        # both 001 and 002 (Docker)
-make migrate-down   # 002 down, then 001 down (drops jobs table)
-```
+Docker images use `file:///app/migrations`; local runs use `file://migrations` from the project root.
 
 ## Configuration
 
@@ -124,6 +115,13 @@ make migrate-down   # 002 down, then 001 down (drops jobs table)
 |-----|---------|-------------|
 | `HTTP_ADDR` | `:8080` | API listen address |
 | `HTTP_BASE_URL` | `http://localhost:8080` | Base URL in job response `links.self` |
+
+### Service
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `SERVICE_MAX_ATTEMPTS` | `5` | Max execution attempts per job |
+| `SERVICE_TIMEOUT_SECONDS` | `300` | Per-attempt handler timeout (seconds) |
 
 ### Postgres
 
@@ -161,11 +159,9 @@ make migrate-down   # 002 down, then 001 down (drops jobs table)
 | `BACKOFF_MAX` | `15m` | Cap on backoff delay |
 | `RETRY_SCHEDULER_INTERVAL` | `5s` | How often due `retrying` jobs are re-enqueued |
 
-On handler failure the worker:
+On handler failure the worker sets `retrying` with `run_at = now + backoff` (full jitter), **acks** the Redis message, and the **scheduler** promotes due jobs to `queued` and **XADD**s again.
 
-1. Sets `retrying` with `run_at = now + backoff` (full jitter)
-2. **Acks** the Redis message
-3. **Scheduler** promotes due jobs → `queued` and **XADD**s again
+Handlers may return `domain/error.RetryableError` or `TerminalError` to control retry vs dead.
 
 Test retries:
 
@@ -178,8 +174,6 @@ curl -s -X POST http://localhost:8080/v1/jobs \
   -H 'Content-Type: application/json' \
   -d '{"job_type":"fail","payload":{}}'
 ```
-
-Handlers may return `domain/error.RetryableError` or `TerminalError` to control retry vs dead.
 
 ## How REST talks to domain
 
@@ -196,7 +190,8 @@ domain model → mapper → rest/dto → HTTP JSON
 | `interface/rest/dto` | Request/response shapes, validation, domain mapping |
 | `interface/rest/handler` | Gin binding, status codes, error mapping |
 | `service` | Business rules (idempotency, enqueue workflow) |
-| `domain/model` | Core types (`Job`, `CreateJobInput`) |
+| `domain/model` | `Job`, `QueueMessage`, `ConsumedMessage` |
+| `domain/enum` | `JobStatus` |
 | `repository` | Delegates to `JobStore` + `JobQueue` |
 | `infrastructure/postgres` | go-pg, DTOs, mappers |
 | `infrastructure/redis` | Redis Streams queue |
@@ -207,12 +202,13 @@ domain model → mapper → rest/dto → HTTP JSON
 cmd/api/               # HTTP server
 cmd/worker/            # Consumer + retry scheduler
 config/
-domain/model/
+domain/model/          # Job, QueueMessage, ConsumedMessage
+domain/enum/           # JobStatus
 domain/repository/     # JobStore, JobQueue interfaces
 domain/handler/
 domain/error/
 repository/
-service/               # main.go: JobService + Repository interfaces
+service/
 worker/                # Runner, backoff, scheduler, built-in handlers
 interface/rest/dto/
 infrastructure/postgres/
@@ -229,16 +225,4 @@ migrations/
 
 Stream: `taskforge:queue:normal` · Consumer group: `taskforge-workers`
 
-### Migrations
-
-| File | Purpose |
-|------|---------|
-| `001_init.up.sql` | `jobs` table |
-| `002_jobs_retry_index.up.sql` | Index on `(status, run_at)` for retries |
-
-Docker: SQL via `migrate` service; api/worker also run golang-migrate from `/app/migrations` (`POSTGRES_MIGRATION_PATH=file:///app/migrations`). Local: `file://migrations` (project root).
-
-| Command | Action |
-|---------|--------|
-| `make migrate` | Apply `001` + `002` (Compose) |
-| `make migrate-down` | Roll back `002` then `001` (drops `jobs`) |
+See [Job statuses](#job-statuses) and [Migrations](#migrations) for lifecycle and schema detail.
