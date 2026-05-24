@@ -63,10 +63,11 @@ func (s *jobService) Create(ctx context.Context, in *model.Job) (*model.Job, boo
 		return nil, false, err
 	}
 
-	if err := s.repo.Enqueue(ctx, model.QueueMessage{JobID: job.ID, JobType: job.JobType}); err != nil {
+	// Mark queued before Redis enqueue so workers never claim while status is still pending.
+	if err := s.repo.UpdateStatus(ctx, job.ID, enum.JobStatusQueued); err != nil {
 		return nil, false, err
 	}
-	if err := s.repo.UpdateStatus(ctx, job.ID, enum.JobStatusQueued); err != nil {
+	if err := s.repo.Enqueue(ctx, model.QueueMessage{JobID: job.ID, JobType: job.JobType}); err != nil {
 		return nil, false, err
 	}
 	job.Status = enum.JobStatusQueued
