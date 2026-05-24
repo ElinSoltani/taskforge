@@ -3,10 +3,13 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	domainerror "github.com/taskforge/taskforge/domain/error"
+	"github.com/taskforge/taskforge/domain/enum"
 	domainhandler "github.com/taskforge/taskforge/domain/handler"
 	"github.com/taskforge/taskforge/domain/model"
 	"github.com/taskforge/taskforge/repository"
@@ -58,7 +61,11 @@ func (r *Runner) Run(ctx context.Context) error {
 func (r *Runner) process(ctx context.Context, msg *model.ConsumedMessage) error {
 	job, err := r.repo.Claim(ctx, msg.Payload.JobID)
 	if err != nil {
-		_ = r.repo.Ack(ctx, msg.Stream, msg.MessageID)
+		if shouldAckAfterClaimFailure(ctx, r.repo, msg.Payload.JobID, err) {
+			_ = r.repo.Ack(ctx, msg.Stream, msg.MessageID)
+		} else {
+			slog.Warn("claim failed, leaving message for redelivery", "job_id", msg.Payload.JobID, "error", err)
+		}
 		return err
 	}
 
@@ -133,5 +140,22 @@ func (DeadHandler) Execute(ctx context.Context, job *model.Job) error {
 	return &domainerror.TerminalError{
 		Code:    "intentional_dead",
 		Message: "dead job type moves straight to DLQ",
+	}
+}
+
+// shouldAckAfterClaimFailure drops stale queue messages; pending/queued jobs stay in the PEL for retry.
+func shouldAckAfterClaimFailure(ctx context.Context, repo *repository.Repository, jobID uuid.UUID, err error) bool {
+	if !errors.Is(err, domainerror.ErrInvalidTransition) {
+		return true
+	}
+	job, getErr := repo.GetByID(ctx, jobID)
+	if getErr != nil {
+		return true
+	}
+	switch job.Status {
+	case enum.JobStatusPending, enum.JobStatusQueued:
+		return false
+	default:
+		return true
 	}
 }
