@@ -14,6 +14,10 @@ func (r *Repository) Enqueue(ctx context.Context, msg model.QueueMessage) (err e
 	return r.queue.Enqueue(ctx, msg)
 }
 
+func (r *Repository) EnqueueDLQ(ctx context.Context, msg model.DLQMessage) (err error) {
+	return r.queue.EnqueueDLQ(ctx, msg)
+}
+
 func (r *Repository) Dequeue(ctx context.Context) (msg *model.ConsumedMessage, err error) {
 	return r.queue.Dequeue(ctx)
 }

@@ -46,7 +46,8 @@ Worker logs show the handler running. Poll `GET /v1/jobs/<id>` until `status` is
 | `job_type` | Behavior |
 |------------|----------|
 | `ping` | Logs payload `message`; set `"fail": true` in payload to simulate a retryable error |
-| `fail` | Always fails with a retryable error until `max_attempts` |
+| `fail` | Always fails with a retryable error until `max_attempts`, then **dead** + DLQ |
+| `dead` | `TerminalError` immediately → **dead** + DLQ (no retries) |
 
 ## Job statuses
 
@@ -54,7 +55,7 @@ Worker logs show the handler running. Poll `GET /v1/jobs/<id>` until `status` is
 
 On failure (with attempts left): `running` → `retrying` → (scheduler) → `queued` → `running` …
 
-Terminal: `dead` (max attempts, `TerminalError`, or unknown job type)
+Terminal: `dead` (max attempts, `TerminalError`, or unknown job type) → entry on Redis stream `taskforge:dlq`
 
 ## Makefile
 
@@ -143,6 +144,8 @@ Docker images use `file:///app/migrations`; local runs use `file://migrations` f
 | `REDIS_DB` | `0` | DB number |
 | `REDIS_STREAM` | `taskforge:queue:normal` | Stream for job messages |
 | `REDIS_CONSUMER_GROUP` | `taskforge-workers` | Consumer group |
+| `REDIS_STREAM_DLQ` | `taskforge:dlq` | Dead-letter stream (ops / replay) |
+| `REDIS_DLQ_CONSUMER_GROUP` | `taskforge-dlq` | Consumer group on DLQ stream |
 
 ### Worker
 
@@ -162,6 +165,21 @@ Docker images use `file:///app/migrations`; local runs use `file://migrations` f
 On handler failure the worker sets `retrying` with `run_at = now + backoff` (full jitter), **acks** the Redis message, and the **scheduler** promotes due jobs to `queued` and **XADD**s again.
 
 Handlers may return `domain/error.RetryableError` or `TerminalError` to control retry vs dead.
+
+### Dead letter queue (DLQ)
+
+When a job becomes **dead**, Postgres is updated first, then a message is **XADD**ed to `taskforge:dlq` with `job_id`, `job_type`, `attempt`, `last_error`, and `dead_at`.
+
+```bash
+# Immediate dead + DLQ
+curl -s -X POST http://localhost:8080/v1/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"job_type":"dead","payload":{}}'
+
+# Inspect DLQ
+docker compose exec redis redis-cli XLEN taskforge:dlq
+docker compose exec redis redis-cli XRANGE taskforge:dlq - +
+```
 
 Test retries:
 
@@ -202,7 +220,7 @@ domain model → mapper → rest/dto → HTTP JSON
 cmd/api/               # HTTP server
 cmd/worker/            # Consumer + retry scheduler
 config/
-domain/model/          # Job, QueueMessage, ConsumedMessage
+domain/model/          # Job, QueueMessage, DLQMessage, ConsumedMessage
 domain/enum/           # JobStatus
 domain/repository/     # JobStore, JobQueue interfaces
 domain/handler/
@@ -222,7 +240,8 @@ migrations/
 2. **Worker** — **XREADGROUP**, claim `running`, run handler
 3. **Success** — `completed`, **XACK**
 4. **Failure** — `retrying` + backoff, **XACK**; scheduler re-enqueues when due
+5. **Dead** — `dead` in Postgres, **XADD** `taskforge:dlq`, **XACK**
 
-Stream: `taskforge:queue:normal` · Consumer group: `taskforge-workers`
+Streams: `taskforge:queue:normal` (work) · `taskforge:dlq` (dead letters)
 
 See [Job statuses](#job-statuses) and [Migrations](#migrations) for lifecycle and schema detail.

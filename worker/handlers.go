@@ -9,5 +9,6 @@ func DefaultHandlers() map[string]domainhandler.JobHandler {
 	return map[string]domainhandler.JobHandler{
 		"ping": PingHandler{},
 		"fail": FailHandler{},
+		"dead": DeadHandler{},
 	}
 }

@@ -125,3 +125,13 @@ type FailHandler struct{}
 func (FailHandler) Execute(ctx context.Context, job *model.Job) error {
 	return &domainerror.RetryableError{Code: "intentional_fail", Message: "fail job type always retries"}
 }
+
+// DeadHandler fails terminally (immediate dead + DLQ, no retries).
+type DeadHandler struct{}
+
+func (DeadHandler) Execute(ctx context.Context, job *model.Job) error {
+	return &domainerror.TerminalError{
+		Code:    "intentional_dead",
+		Message: "dead job type moves straight to DLQ",
+	}
+}

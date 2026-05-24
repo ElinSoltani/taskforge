@@ -75,6 +75,8 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers
+      REDIS_STREAM_DLQ: taskforge:dlq
+      REDIS_DLQ_CONSUMER_GROUP: taskforge-dlq
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -100,6 +102,8 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_STREAM: taskforge:queue:normal
       REDIS_CONSUMER_GROUP: taskforge-workers
+      REDIS_STREAM_DLQ: taskforge:dlq
+      REDIS_DLQ_CONSUMER_GROUP: taskforge-dlq
       WORKER_CONSUMER_NAME: worker-1
     depends_on:
       migrate:

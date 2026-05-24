@@ -10,9 +10,23 @@ import (
 )
 
 func (r *redisClient) EnsureGroup(ctx context.Context) error {
-	err := r.db.XGroupCreateMkStream(ctx, cfg.Stream, cfg.ConsumerGroup, "0").Err()
+	if err := ensureStreamGroup(ctx, r.db, cfg.Stream, cfg.ConsumerGroup); err != nil {
+		return fmt.Errorf("main queue: %w", err)
+	}
+	dlqGroup := cfg.DLQConsumerGroup
+	if dlqGroup == "" {
+		dlqGroup = "taskforge-dlq"
+	}
+	if err := ensureStreamGroup(ctx, r.db, cfg.DLQStream, dlqGroup); err != nil {
+		return fmt.Errorf("dlq stream: %w", err)
+	}
+	return nil
+}
+
+func ensureStreamGroup(ctx context.Context, db *goredis.Client, stream, group string) error {
+	err := db.XGroupCreateMkStream(ctx, stream, group, "0").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		return fmt.Errorf("create consumer group: %w", err)
+		return err
 	}
 	return nil
 }

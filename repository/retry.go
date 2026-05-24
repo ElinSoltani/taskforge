@@ -12,10 +12,6 @@ func (r *Repository) ScheduleRetry(ctx context.Context, id uuid.UUID, lastError 
 	return r.jobs.ScheduleRetry(ctx, id, lastError, runAt)
 }
 
-func (r *Repository) MarkDead(ctx context.Context, id uuid.UUID, lastError string) (err error) {
-	return r.jobs.MarkDead(ctx, id, lastError)
-}
-
 func (r *Repository) ListDueForRetry(ctx context.Context, limit int) (jobs []*model.Job, err error) {
 	return r.jobs.ListDueForRetry(ctx, limit)
 }

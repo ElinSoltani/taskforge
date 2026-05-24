@@ -1,21 +1,25 @@
 package redis
 
 type Config struct {
-	Addr          string
-	Password      string
-	DB            int
-	Stream        string
-	ConsumerGroup string
-	ConsumerName  string
-	BlockTimeout  int // milliseconds for XREADGROUP block
+	Addr             string
+	Password         string
+	DB               int
+	Stream           string
+	ConsumerGroup    string
+	ConsumerName     string
+	BlockTimeout     int // milliseconds for XREADGROUP block
+	DLQStream        string
+	DLQConsumerGroup string
 }
 
 var cfg = &Config{
-	Addr:          "localhost:6379",
-	Stream:        "taskforge:queue:normal",
-	ConsumerGroup: "taskforge-workers",
-	ConsumerName:  "worker-1",
-	BlockTimeout:  2000,
+	Addr:             "localhost:6379",
+	Stream:           "taskforge:queue:normal",
+	ConsumerGroup:    "taskforge-workers",
+	ConsumerName:     "worker-1",
+	BlockTimeout:     2000,
+	DLQStream:        "taskforge:dlq",
+	DLQConsumerGroup: "taskforge-dlq",
 }
 
 func SetConfig(c Config) {
@@ -24,6 +28,9 @@ func SetConfig(c Config) {
 
 func (c *Config) Validation() error {
 	if c.Addr == "" || c.Stream == "" || c.ConsumerGroup == "" {
+		return ErrInvalidRedisConfig
+	}
+	if c.DLQStream == "" {
 		return ErrInvalidRedisConfig
 	}
 	return nil

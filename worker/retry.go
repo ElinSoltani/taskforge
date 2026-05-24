@@ -27,12 +27,12 @@ func HandleFailure(ctx context.Context, repo *repository.Repository, job *model.
 
 	var terminal *domainerror.TerminalError
 	if errors.As(execErr, &terminal) {
-		return repo.MarkDead(ctx, job.ID, execErr.Error())
+		return repo.MarkDead(ctx, job, execErr.Error())
 	}
 
 	if !job.HasAttemptsRemaining() {
 		msg := fmt.Sprintf("max attempts (%d) exceeded: %v", job.MaxAttempts, execErr)
-		return repo.MarkDead(ctx, job.ID, msg)
+		return repo.MarkDead(ctx, job, msg)
 	}
 
 	var retryable *domainerror.RetryableError

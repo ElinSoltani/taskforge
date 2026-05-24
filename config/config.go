@@ -45,11 +45,13 @@ type PostgresConfig struct {
 }
 
 type RedisConfig struct {
-	Addr          string
-	Password      string
-	DB            int
-	Stream        string
-	ConsumerGroup string
+	Addr             string
+	Password         string
+	DB               int
+	Stream           string
+	ConsumerGroup    string
+	DLQStream        string
+	DLQConsumerGroup string
 }
 
 type WorkerConfig struct {
@@ -72,11 +74,13 @@ func Load() (*Config, error) {
 			MigrationPath: env("POSTGRES_MIGRATION_PATH", "file://migrations"),
 		},
 		Redis: RedisConfig{
-			Addr:          env("REDIS_ADDR", "redis:6379"),
-			Password:      env("REDIS_PASSWORD", ""),
-			DB:            envInt("REDIS_DB", 0),
-			Stream:        env("REDIS_STREAM", "taskforge:queue:normal"),
-			ConsumerGroup: env("REDIS_CONSUMER_GROUP", "taskforge-workers"),
+			Addr:             env("REDIS_ADDR", "redis:6379"),
+			Password:         env("REDIS_PASSWORD", ""),
+			DB:               envInt("REDIS_DB", 0),
+			Stream:           env("REDIS_STREAM", "taskforge:queue:normal"),
+			ConsumerGroup:    env("REDIS_CONSUMER_GROUP", "taskforge-workers"),
+			DLQStream:        env("REDIS_STREAM_DLQ", "taskforge:dlq"),
+			DLQConsumerGroup: env("REDIS_DLQ_CONSUMER_GROUP", "taskforge-dlq"),
 		},
 		Worker: WorkerConfig{
 			ConsumerName: env("WORKER_CONSUMER_NAME", "worker-1"),
@@ -109,13 +113,15 @@ func applyInfrastructureConfig(cfg *Config) {
 		MigrationPath: cfg.Postgres.MigrationPath,
 	})
 	rediscfg.SetConfig(rediscfg.Config{
-		Addr:          cfg.Redis.Addr,
-		Password:      cfg.Redis.Password,
-		DB:            cfg.Redis.DB,
-		Stream:        cfg.Redis.Stream,
-		ConsumerGroup: cfg.Redis.ConsumerGroup,
-		ConsumerName:  cfg.Worker.ConsumerName,
-		BlockTimeout:  int(cfg.Worker.BlockTimeout / time.Millisecond),
+		Addr:             cfg.Redis.Addr,
+		Password:         cfg.Redis.Password,
+		DB:               cfg.Redis.DB,
+		Stream:           cfg.Redis.Stream,
+		ConsumerGroup:    cfg.Redis.ConsumerGroup,
+		ConsumerName:     cfg.Worker.ConsumerName,
+		BlockTimeout:     int(cfg.Worker.BlockTimeout / time.Millisecond),
+		DLQStream:        cfg.Redis.DLQStream,
+		DLQConsumerGroup: cfg.Redis.DLQConsumerGroup,
 	})
 }
 
